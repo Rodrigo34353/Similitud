@@ -1,0 +1,138 @@
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity as cos
+import spacy
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import MultiLabelBinarizer
+
+N = 10000
+
+
+#-------------------------Calcular similitud bayes------------------------------
+# Leer el archivo CSV
+df = pd.read_csv("descripciones.csv")
+
+# Toda esta columna tiene valores nulos
+df.drop("names_role_2", axis=1, inplace=True)
+
+# Quitamos todos los valores nulos
+df[df.select_dtypes(include='object').columns] = df.select_dtypes(include='object').fillna('')
+df[df.select_dtypes(include='float64').columns] = df.select_dtypes(include='float64').fillna(0)
+
+# Limpiamos las descripciones
+df['description'].str.replace(r'[,\(\)"\'!.;,0-9:]', '', regex=True)
+df['description'].str.lower()
+
+descripciones = df['description'].tolist()
+generos = df['subgenres'].tolist()
+
+descripciones = [descripciones[i] for i in range(N)]
+generos = [generos[i] for i in range(N)]
+
+# Acomodamos las descripciones y generos en un dataframe
+
+juan_martin = {'description' : descripciones, 'subgenres' : generos}
+
+necesito = pd.DataFrame(juan_martin)
+
+# Convertimos los géneros en una matriz
+mlb = MultiLabelBinarizer()
+y = mlb.fit_transform(necesito['subgenres'].str.lower().apply(lambda x: x.split(", ") if isinstance(x, str) else x))
+
+# Convertimos las descripciones a vectores TF-IDF
+vectorizador = TfidfVectorizer(analyzer="word")
+X = vectorizador.fit_transform(necesito['description'])
+
+# Entrenamos el clasificador
+clasificador = OneVsRestClassifier(LogisticRegression())
+clasificador.fit(X, y)
+
+# Función para predecir la probabilidad de géneros para una nueva descripción
+def clasificaciones(description):
+    # Transformamos la descripción en vector
+    nueva = vectorizador.transform([description])
+
+    # Aplicamor el clasificador
+    probabilidades = clasificador.predict_proba(nueva)[0]
+
+    return probabilidades
+
+#----------------------------Funciones auxiliares-------------------------------
+# Transformamos en matriz
+peliculas = df.to_numpy()
+
+class Peli:
+    def __init__(self, id ,subgenero, age, duration, network, titulo, descripcion, roles1, roles3):
+        self.id = id
+        self.subgenero = subgenero.lower().replace(' ', '').split(',')
+        self.edad = age.lower()
+        self.duracion = duration
+        self.plataforma = network.lower()
+        self.titulo = titulo
+        self.descripcion = descripcion.lower()
+        self.roles1 = roles1.lower().replace(' ', '').split(',')
+        self.roles3 = roles3.lower().replace(' ', '').split(',')
+        self.probas = clasificaciones(descripciones[id])
+
+pelis = []
+for i in range(N):
+    pelis.append(Peli(i, peliculas[i,1], peliculas[i,4], peliculas[i,6], peliculas[i,7], peliculas[i,9], peliculas[i,10], peliculas[i,11], peliculas[i,12]))
+
+def tipo1(prop1, prop2):
+    if prop1 == prop2:
+        return 1
+    else:
+        return 0
+
+def tipo2(lista1, lista2):
+    total = lista1 + lista2
+    total = set(total)
+    return [len(lista1)/len(total), len(lista2)/len(total)]
+
+def d_sim(vec1, vec2):
+    vec1 = np.array(vec1)
+    vec2 = np.array(vec2)
+    arriba = np.minimum(vec1, vec2)
+    return(sum(arriba) / len(vec1))
+
+def tipo3(tim1, tim2):
+    if tim1 == tim2:
+        return [1,1]
+    else:
+        p = (tim1+tim2)/2
+        p1 = abs(tim1 - p)
+        p2 = abs(tim2 - p)
+        return [1-(min([p1,p])/p), 1 - (min([p2,p])/p)]
+
+#-------------------------------------------------------------------------------
+
+def similitud_pelis(peli1, peli2):
+    duracion1 = tipo3(peli1.duracion, peli2.duracion)
+    suggenero = tipo2(peli1.subgenero, peli2.subgenero)
+    edad1 = tipo1(peli1.edad, peli2.edad)
+    clasi = d_sim(peli1.probas, peli2.probas)
+    roles11 = tipo2(peli1.roles1, peli2.roles1)
+    roles31 = tipo2(peli1.roles3, peli2.roles3)
+    vec1 = [duracion1[0],suggenero[0], edad1 , clasi, roles11[0], roles31[0]]
+    vec2 = [duracion1[1],suggenero[1], edad1, clasi, roles11[1],roles31[1]]
+    return d_sim(vec1, vec2)
+
+versim = np.zeros((N,N))
+
+for i in range(N):
+    for j in range(i+1):
+        a = similitud_pelis(pelis[i],pelis[j])
+        versim[i,j] = a
+        versim[j,i] = a
+
+plt.figure(figsize=(12, 10))
+sns.heatmap(versim, cmap="viridis", square=True)
+plt.title("Mapa de Calor de Similitud entre Textos")
+plt.xlabel("Textos")
+plt.ylabel("Textos")
+plt.show()
